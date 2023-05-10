@@ -2,43 +2,200 @@ import { initializeKeypair } from "./initializeKeypair";
 import * as web3 from "@solana/web3.js";
 import * as token from "@solana/spl-token";
 
-async function createNewMint(
+main()
+  .then(() => {
+    console.log("Finished successfully");
+    process.exit(0);
+  })
+  .catch((error) => {
+    console.log(error);
+    process.exit(1);
+  });
+
+
+async function main() {
+  // ESTABLISH CONNECTION
+  const connection = new web3.Connection(web3.clusterApiUrl("devnet"));
+
+  // INIT A NEW KEYPAIR (WALLET 1) IF NOT IN ENV
+  const user1 = await initializeKeypair(connection);
+
+  // CREATE A NEW MINT (PUBKEY RETURNED)
+  const mint = await createMintAccount(
+    connection,
+    user1,
+    user1.publicKey,
+    user1.publicKey,
+    2,
+    undefined,
+    {
+      commitment: 'confirmed',
+      preflightCommitment: "confirmed"}
+  );
+
+  // GET MINT ACCOUNT
+  const mintInfo = await token.getMint(connection, mint, 'confirmed');
+
+
+  // CREATE TOKEN ACCOUNT 1
+  const tokenAccount = await getOrCreateTokenAccount(
+    connection,
+    user1,
+    mint,
+    user1.publicKey,
+    undefined,
+    'confirmed',
+    {
+      commitment: 'confirmed',
+      preflightCommitment: "confirmed"
+    }
+  );
+
+  // MINT 100 TOKEN TO TOKEN ACCOUNT 1
+  await mintTokens(
+    connection,
+    user1,
+    mint,
+    tokenAccount.address,
+    user1,
+    100 * 10 ** mintInfo.decimals,
+    undefined,
+    {
+      commitment: 'confirmed',
+      preflightCommitment: "confirmed"
+    }
+  );
+
+  // CREATE WALLET 2
+  const user2_delegate = web3.Keypair.generate();
+
+  // DELEGATE 50 TOKEN TO WALLET 2
+  await approveDelegate(
+    connection,
+    user1,
+    tokenAccount.address,
+    user2_delegate.publicKey,
+    user1.publicKey,
+    50 * 10 ** mintInfo.decimals,    
+    undefined,
+    {
+      commitment: 'confirmed',
+      preflightCommitment: "confirmed"
+    }
+  );
+
+  // CREATE WALLET 3
+  const user3_receiver = web3.Keypair.generate().publicKey;
+  // CREATE TOKEN ACCOUNT 3
+  const receiverTokenAccount = await getOrCreateTokenAccount(
+    connection,
+    user1,
+    mint,
+    user3_receiver,
+    undefined,
+    'confirmed',
+    {
+      commitment: 'confirmed',
+      preflightCommitment: "confirmed"
+    }
+  );
+
+  // TRANSFER 50 TOKEN FROM TOKEN ACCOUNT 1 TO TOKEN ACCOUNT 3, WITH WALLET 2
+  await transferTokens(
+    connection,
+    user1,
+    tokenAccount.address,
+    receiverTokenAccount.address,
+    user2_delegate, // delegated amount
+    50 * 10 ** mintInfo.decimals,
+    undefined,
+    {
+      commitment: 'confirmed',
+      preflightCommitment: "confirmed"
+    }
+  );
+
+  // REVOKE WALLET 2 DELEGATION
+  await revokeDelegate(
+    connection, 
+    user1, 
+    tokenAccount.address, 
+    user1.publicKey,
+    undefined,
+    {
+      commitment: 'confirmed',
+      preflightCommitment: "confirmed"
+    });
+
+  // BURN 25 FROM TOKEN ACCOUNT 1
+  await burnTokens(
+    connection,
+    user1,
+    tokenAccount.address,
+    mint,
+    user1,
+    25 * 10 ** mintInfo.decimals,
+    undefined,
+    {
+      commitment: 'confirmed',
+      preflightCommitment: "confirmed"
+    }
+  );
+}
+  
+  
+
+async function createMintAccount(
   connection: web3.Connection,
   payer: web3.Keypair,
   mintAuthority: web3.PublicKey,
   freezeAuthority: web3.PublicKey,
-  decimals: number
+  decimals: number,
+  keypair?: web3.Keypair | undefined,
+  confirmOptions?: web3.ConfirmOptions | undefined,
+  programId?: web3.PublicKey | undefined
 ): Promise<web3.PublicKey> {
   const tokenMint = await token.createMint(
     connection,
     payer,
     mintAuthority,
     freezeAuthority,
-    decimals
+    decimals,
+    keypair,
+    confirmOptions,
+    programId
   );
 
   console.log(
-    `Token Mint: https://explorer.solana.com/address/${tokenMint}?cluster=devnet`
+    `Mint Account \x1b[32m${tokenMint}\x1b[0m created: https://explorer.solana.com/address/${tokenMint}?cluster=devnet \n`
   );
 
   return tokenMint;
 }
 
-async function createTokenAccount(
+async function getOrCreateTokenAccount(
   connection: web3.Connection,
   payer: web3.Keypair,
   mint: web3.PublicKey,
-  owner: web3.PublicKey
+  owner: web3.PublicKey,
+  allowOwnerOffCurve?: boolean | undefined,
+  commitment?: web3.Commitment | undefined,
+  confirmOptions?: web3.ConfirmOptions | undefined,
+  programId?: web3.PublicKey | undefined
 ) {
   const tokenAccount = await token.getOrCreateAssociatedTokenAccount(
     connection,
     payer,
     mint,
-    owner
+    owner,
+    allowOwnerOffCurve,
+    commitment,
+    confirmOptions,
+    programId
   );
 
   console.log(
-    `Token Account: https://explorer.solana.com/address/${tokenAccount.address}?cluster=devnet`
+    `Token Account \x1b[32m${tokenAccount.address}\x1b[0m created for \x1b[32m${owner}\x1b[0m: https://explorer.solana.com/address/${tokenAccount.address}?cluster=devnet \n`
   );
 
   return tokenAccount;
@@ -50,7 +207,10 @@ async function mintTokens(
   mint: web3.PublicKey,
   destination: web3.PublicKey,
   authority: web3.Keypair,
-  amount: number
+  amount: number,
+  multiSigners?: web3.Signer[] | undefined,
+  confirmOptions?: web3.ConfirmOptions | undefined,
+  programId?: web3.PublicKey | undefined
 ) {
   const transactionSignature = await token.mintTo(
     connection,
@@ -58,11 +218,14 @@ async function mintTokens(
     mint,
     destination,
     authority,
-    amount
+    amount,
+    multiSigners,
+    confirmOptions,
+    programId
   );
 
   console.log(
-    `Mint Token Transaction: https://explorer.solana.com/tx/${transactionSignature}?cluster=devnet`
+    `Mint \x1b[32m${amount}\x1b[0m token basis points to Token Account \x1b[32m${destination}\x1b[0m: https://explorer.solana.com/tx/${transactionSignature}?cluster=devnet \n`
   );
 }
 
@@ -72,7 +235,10 @@ async function approveDelegate(
   account: web3.PublicKey,
   delegate: web3.PublicKey,
   owner: web3.Signer | web3.PublicKey,
-  amount: number
+  amount: number,
+  multiSigners?: web3.Signer[] | undefined,
+  confirmOptions?: web3.ConfirmOptions | undefined,
+  programId?: web3.PublicKey | undefined
 ) {
   const transactionSignature = await token.approve(
     connection,
@@ -80,11 +246,14 @@ async function approveDelegate(
     account,
     delegate,
     owner,
-    amount
+    amount,
+    multiSigners,
+    confirmOptions,
+    programId
   );
 
   console.log(
-    `Approve Delegate Transaction: https://explorer.solana.com/tx/${transactionSignature}?cluster=devnet`
+    `Approve \x1b[32m${amount}\x1b[0m token basis points to Delegate Account \x1b[32m${delegate}\x1b[0m: https://explorer.solana.com/tx/${transactionSignature}?cluster=devnet \n`
   );
 }
 
@@ -92,17 +261,23 @@ async function revokeDelegate(
   connection: web3.Connection,
   payer: web3.Keypair,
   account: web3.PublicKey,
-  owner: web3.Signer | web3.PublicKey
+  owner: web3.Signer | web3.PublicKey,
+  multiSigners?: web3.Signer[] | undefined,
+  confirmOptions?: web3.ConfirmOptions | undefined,
+  programId?: web3.PublicKey | undefined
 ) {
   const transactionSignature = await token.revoke(
     connection,
     payer,
     account,
-    owner
+    owner,
+    multiSigners,
+    confirmOptions,
+    programId
   );
 
   console.log(
-    `Revote Delegate Transaction: https://explorer.solana.com/tx/${transactionSignature}?cluster=devnet`
+    `Revoke delegate by owner \x1b[32m${owner}\x1b[0m: https://explorer.solana.com/tx/${transactionSignature}?cluster=devnet \n`
   );
 }
 
@@ -112,7 +287,10 @@ async function transferTokens(
   source: web3.PublicKey,
   destination: web3.PublicKey,
   owner: web3.Keypair,
-  amount: number
+  amount: number,
+  multiSigners?: web3.Signer[] | undefined,
+  confirmOptions?: web3.ConfirmOptions | undefined,
+  programId?: web3.PublicKey | undefined
 ) {
   const transactionSignature = await token.transfer(
     connection,
@@ -120,11 +298,14 @@ async function transferTokens(
     source,
     destination,
     owner,
-    amount
+    amount,
+    multiSigners,
+    confirmOptions,
+    programId
   );
 
   console.log(
-    `Transfer Transaction: https://explorer.solana.com/tx/${transactionSignature}?cluster=devnet`
+    `Transfer \x1b[32m${amount}\x1b[0m token basis points from Token Account \x1b[32m${source}\x1b[0m to Token Account \x1b[32m${destination}\x1b[0m: https://explorer.solana.com/tx/${transactionSignature}?cluster=devnet \n`
   );
 }
 
@@ -134,7 +315,10 @@ async function burnTokens(
   account: web3.PublicKey,
   mint: web3.PublicKey,
   owner: web3.Keypair,
-  amount: number
+  amount: number,
+  multiSigners?: web3.Signer[] | undefined,
+  confirmOptions?: web3.ConfirmOptions | undefined,
+  programId?: web3.PublicKey | undefined
 ) {
   const transactionSignature = await token.burn(
     connection,
@@ -142,104 +326,14 @@ async function burnTokens(
     account,
     mint,
     owner,
-    amount
+    amount,
+    multiSigners,
+    confirmOptions,
+    programId
   );
 
   console.log(
-    `Burn Transaction: https://explorer.solana.com/tx/${transactionSignature}?cluster=devnet`
+    `Burn \x1b[32m${amount}\x1b[0m token basis points from Token Account \x1b[32m${account}\x1b[0m: https://explorer.solana.com/tx/${transactionSignature}?cluster=devnet \n`
   );
 }
 
-async function main() {
-  // ESTABLISH CONNECTION
-  const connection = new web3.Connection(web3.clusterApiUrl("devnet"));
-
-  // INIT A NEW KEYPAIR (WALLET 1) IF NOT IN ENV
-  const user = await initializeKeypair(connection);
-
-  // CREATE A NEW MINT (PUBKEY RETURNED)
-  const mint = await createNewMint(
-    connection,
-    user,
-    user.publicKey,
-    user.publicKey,
-    2
-  );
-
-  // GET MINT ACCOUNT
-  const mintInfo = await token.getMint(connection, mint);
-
-  // CREATE TOKEN ACCOUNT 1
-  const tokenAccount = await createTokenAccount(
-    connection,
-    user,
-    mint,
-    user.publicKey
-  );
-
-  // MINT 100 TOKEN TO TOKEN ACCOUNT 1
-  await mintTokens(
-    connection,
-    user,
-    mint,
-    tokenAccount.address,
-    user,
-    100 * 10 ** mintInfo.decimals
-  );
-
-  // CREATE WALLET 2
-  const delegate = web3.Keypair.generate();
-
-  // DELEGATE 50 TOKEN TO WALLET 2
-  await approveDelegate(
-    connection,
-    user,
-    tokenAccount.address,
-    delegate.publicKey,
-    user.publicKey,
-    50 * 10 ** mintInfo.decimals
-  );
-
-  // CREATE WALLET 3
-  const receiver = web3.Keypair.generate().publicKey;
-  // CREATE TOKEN ACCOUNT 3
-  const receiverTokenAccount = await createTokenAccount(
-    connection,
-    user,
-    mint,
-    receiver
-  );
-
-  // TRANSFER 50 TOKEN FROM TOKEN ACCOUNT 1 TO TOKEN ACCOUNT 3, WITH WALLET 2
-  await transferTokens(
-    connection,
-    user,
-    tokenAccount.address,
-    receiverTokenAccount.address,
-    delegate, // delegated amount
-    50 * 10 ** mintInfo.decimals
-  );
-
-  // REVOKE WALLET 2 DELEGATION
-  await revokeDelegate(connection, user, tokenAccount.address, user.publicKey);
-
-  // BURN 25 FROM TOKEN ACCOUNT 1
-  await burnTokens(
-    connection,
-    user,
-    tokenAccount.address,
-    mint,
-    user,
-    25 * 10 ** mintInfo.decimals
-  );
-}
-
-main()
-  .then(() => {
-    console.log("Finished successfully");
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.log(error);
-    process.exit(1);
-  });
