@@ -1,4 +1,4 @@
-import { initializeKeypair } from "./initializeKeypair";
+import { initializeKeypair, airdropSolIfNeeded } from "./initializeKeypair";
 import * as web3 from "@solana/web3.js";
 import * as token from "@solana/spl-token";
 
@@ -19,6 +19,7 @@ async function main() {
 
   // INIT A NEW KEYPAIR (WALLET 1) IF NOT IN ENV
   const user1 = await initializeKeypair(connection);
+  await airdropSolIfNeeded(connection, user1.publicKey, 2, 5)
 
   // CREATE A NEW MINT (PUBKEY RETURNED)
   const mint = await createMintAccount(
